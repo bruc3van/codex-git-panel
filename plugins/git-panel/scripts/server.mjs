@@ -32,7 +32,8 @@ export async function createPanel(directory) {
     for(const name of ['MERGE_HEAD','rebase-merge','rebase-apply','CHERRY_PICK_HEAD','REVERT_HEAD']) {try{await stat(path.join(gitDir,name));operation=name;break;}catch{}}
     const conflict=files.some(f=>f.x==='U'||f.y==='U'||['AA','DD'].includes(f.x+f.y));
     const index=await git(['ls-files','--stage','-z']);
-    return {root,branch,upstream,head,files,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
+    const branches=(await git(['for-each-ref','--format=%(refname:strip=2)','refs/heads/'])).trim().split('\n').filter(Boolean);
+    return {branches,root,branch,upstream,head,files,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
   }
   async function diff(p, staged, commit) {
     if(commit) { if(!/^[a-f0-9]{40}$/.test(commit))throw Error('无效提交'); return await git(['show','--format=fuller','--first-parent','--no-ext-diff','--no-textconv',commit]); }
@@ -46,6 +47,16 @@ export async function createPanel(directory) {
       return '--- /dev/null\n+++ b/'+p+'\n@@ -0,0 +1,'+bytes.toString().split('\n').length+' @@\n'+bytes.toString().split('\n').map(l=>'+'+l).join('\n');
     }
     return await git(['diff','--no-ext-diff','--no-textconv',...(staged?['--cached']:[]),'--',p,...(f.oldPath?[f.oldPath]:[])]);
+  }
+  async function openFile(p) {
+    const s=await state();
+    if(typeof p!=='string'||!s.files.some(f=>f.path===p))throw Error('文件状态已变化，请刷新');
+    const resolved=await realpath(path.join(root,p)), relative=path.relative(await realpath(root),resolved);
+    if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||!(await stat(resolved)).isFile())throw Error('只能打开仓库内的文件');
+    if(/\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|lnk|url|hta|reg)$/i.test(resolved))throw Error('为防止执行脚本或程序，此文件类型不支持通过默认 App 打开');
+    if(process.platform!=='win32')throw Error('当前默认 App 打开功能仅支持 Windows');
+    await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','$info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = $env:GIT_PANEL_OPEN_PATH; $info.UseShellExecute = $true; [System.Diagnostics.Process]::Start($info) | Out-Null'],{windowsHide:true,timeout:15000,env:{...process.env,GIT_PANEL_OPEN_PATH:resolved}});
+    return {ok:true};
   }
   async function act(body) {
     if(busy)throw Error('另一个操作正在执行');busy=true;
@@ -69,6 +80,10 @@ export async function createPanel(directory) {
           await git(['add','--all','--','.']);
         }else if(!s.files.some(f=>f.x!==' '&&f.x!=='?'))throw Error('请先暂存文件');
         await git(['commit','-m',body.message]);
+      } else if(a==='switch') {
+        if(typeof body.branch!=='string'||!s.branches.includes(body.branch))throw Error('请选择已有的本地分支');
+        if(s.files.length)throw Error('有未提交更改，请先提交后再切换分支');
+        await git(['switch','--no-guess','--',body.branch]);
       } else if(a==='fetch') {if(!s.remote)throw Error('尚未配置远端');await git(['fetch','--all']);fetched=new Date().toISOString();}
       else if(a==='pull'||a==='push') {if(!s.branch||!s.upstream)throw Error('需要分支及上游配置'); if(a==='pull'&&s.files.length)throw Error('请先提交或自行保存工作区更改'); if(a==='pull')await git(['pull','--ff-only','--no-rebase']);else {const remote=(await git(['config','--get',`branch.${s.branch}.remote`])).trim();const ref=(await git(['config','--get',`branch.${s.branch}.merge`])).trim(); if(!remote||!ref.startsWith('refs/heads/'))throw Error('上游配置无效');await git(['push','--',remote,`HEAD:${ref}`]);}}
       else throw Error('未知操作');
@@ -89,7 +104,7 @@ export async function createPanel(directory) {
         if(req.headers.origin && req.headers.origin!==origin)return send(403,{error:'Origin rejected'});
         if(req.method==='GET'&&url.pathname==='/api/state')return send(200,await state());
         if(req.method==='GET'&&url.pathname==='/api/diff')return send(200,{diff:await diff(url.searchParams.get('path'),url.searchParams.get('staged')==='true',url.searchParams.get('commit'))});
-        if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}return send(200,await act(JSON.parse(data)));}
+        if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}const body=JSON.parse(data);return send(200,body.action==='open'?await openFile(body.path):await act(body));}
         return send(404,{error:'Not found'});
       }
       const asset={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/icon.svg':'icon.svg'}[url.pathname];

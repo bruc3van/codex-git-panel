@@ -29,6 +29,14 @@ test('Git workflow, stale index protection, remote operations and HTTP boundarie
   await p.act({action:'unstage',path:'中文 file.txt'});
   await p.act({action:'discard',path:'中文 file.txt',confirm:true});assert.equal((await p.state()).files.length,0);
   await assert.rejects(p.act({action:'stage',path:'../escape'}),/文件状态/);
+  run(tmp,'branch','existing');
+  assert.ok((await p.state()).branches.includes('existing'));
+  await p.act({action:'switch',branch:'existing'});assert.equal((await p.state()).branch,'existing');
+  await assert.rejects(p.act({action:'switch',branch:'missing'}),/已有的本地分支/);
+  await writeFile(path.join(tmp,'中文 file.txt'),'dirty');
+  await assert.rejects(p.act({action:'switch',branch:'main'}),/未提交更改/);
+  await p.act({action:'discard',path:'中文 file.txt',confirm:true});
+  await p.act({action:'switch',branch:'main'});assert.equal((await p.state()).branch,'main');
   const remote=await mkdtemp(path.join(os.tmpdir(),'git-panel-remote-'));run(remote,'init','--bare');run(tmp,'remote','add','origin',remote);run(tmp,'push','-u','origin','main');
   await p.act({action:'fetch'});await p.act({action:'pull'});await p.act({action:'push'});
   const peer=await mkdtemp(path.join(os.tmpdir(),'git-panel-peer-'));run(peer,'clone','--branch','main',remote,'.');run(peer,'config','user.name','Peer');run(peer,'config','user.email','peer@example.invalid');await writeFile(path.join(peer,'remote.txt'),'remote\n');run(peer,'add','.');run(peer,'commit','-m','remote update');run(peer,'push');

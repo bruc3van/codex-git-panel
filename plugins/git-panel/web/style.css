@@ -25,6 +25,33 @@ details+details{margin-top:10px}summary{padding:6px 3px 9px;cursor:pointer;font-
 header.compact-toolbar{height:43px;min-height:43px;padding:7px 12px;gap:9px;flex-wrap:nowrap}
 .repo-title{min-width:0;flex:1}.repo-title strong{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .product-icon{display:block;flex-shrink:0;width:24px;height:24px;filter:drop-shadow(0 1px 2px #1764dc20)}
+.branch-wrap{position:relative;min-width:0;max-width:48%}.compact-toolbar .branch-wrap .branch-pill{max-width:100%}.branch-pill>.ui-icon:last-child{width:12px;transform:rotate(90deg)}.branch-menu{width:220px;max-height:280px;overflow:auto}.branch-menu button{overflow-wrap:anywhere}.branch-pill:hover:not(:disabled){background:var(--selected);border-color:var(--accent)}
+.preview-closed article,.preview-closed #divider{display:none}.preview-closed aside{width:100%!important;max-width:100%}
+button.loading:disabled{opacity:1;color:var(--accent)}button.loading::before{content:'';display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;margin-right:6px;vertical-align:-2px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){button.loading::before{animation:none}}
+/* Readable typography, with matching static section headings. */
+body.light{--text:#202733;--muted:#596576}
+:root{--muted:#b3bdcc}
+.history-heading{display:flex;align-items:center;gap:8px;min-height:32px}
+.history-heading strong,.diff-heading strong,.section-title strong{font-size:14px;font-weight:600}
+.history-heading .document-icon,.diff-heading .document-icon{width:16px;text-align:center;flex-shrink:0;font-size:18px}
+.history{padding-left:16px;padding-right:16px}
+.repo-title strong{font-size:14px}
+.compact-toolbar .branch-wrap .branch-pill,.compact-toolbar #themeButton{font-size:12px}
+.branch-state{font-size:11px}
+.compose label{font-size:12px}.compose label span{font-size:10px}
+.compose textarea{font-size:14px;line-height:1.6}textarea::placeholder{opacity:1}
+.primary{font-size:14px}.file-name{font-size:14px}.file-dir{font-size:11px}
+summary{font-size:13px}.count{font-size:11px}
+.log .subject{font-size:13px}.log small{font-size:11px}
+.tools button{font-size:12px}.muted{font-size:12px}
+.diff{font-size:13px;line-height:1.8}.line.meta{font-size:12px}.number{font-size:11px;opacity:1}
+.diff-caption,.diff-heading .badge{font-size:11px}.eyebrow{font-size:10px}
+footer{font-size:11px}
+.open-file,.preview-control{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;padding:5px;border:1px solid var(--line);background:var(--surface);color:var(--accent);border-radius:7px}
+.open-file:hover:not(:disabled),.preview-control:hover:not(:disabled){background:var(--selected);border-color:var(--accent)}
+.open-file.loading,.preview-control.loading{width:auto;min-width:28px}.open-file.loading svg,.preview-control.loading svg{display:none}
+@media(max-width:720px){.history{padding-left:10px;padding-right:10px}}
 .compact-toolbar .branch-pill{font-size:10px;padding:4px 7px;max-width:40%;flex-shrink:1;min-width:0}
 .compact-toolbar #themeButton{min-width:62px;padding:4px 7px;font-size:10px}
 footer{min-height:22px;padding:3px 10px;font-size:10px;line-height:16px;max-height:64px}
