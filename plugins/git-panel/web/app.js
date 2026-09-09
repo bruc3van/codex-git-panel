@@ -78,7 +78,6 @@ function renderFiles(){
   }
   $('groups').append(d);
  }
- if(!state.files.length)$('groups').append(el('p','工作区干净','muted'));
 }
 function renderHistory(){
  $('history').replaceChildren();
