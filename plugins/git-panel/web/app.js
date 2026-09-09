@@ -1,3 +1,4 @@
+import './tooltips.js';
 const $=id=>document.getElementById(id);
 const token=location.hash.slice(1)||sessionStorage.getItem('git-panel-token');
 if(location.hash){sessionStorage.setItem('git-panel-token',token);history.replaceState(null,'',location.pathname);}
@@ -37,14 +38,14 @@ function buttons(){
  const locked=!state||busy||state?.busy||state?.conflict||!!state?.operation;
  const hasChanges=!!state?.files.length, pushMode=!hasChanges&&state?.ahead>0;
  document.querySelectorAll('button').forEach(b=>b.disabled=busy);
- $('commit').textContent=pushMode?`↑ Push ↑${state.ahead}`:'Commit';
+ $('commit').textContent=pushMode?`↑ Push (${state.ahead})`:'Commit';
  $('commit').disabled=locked||!state?.branch||(pushMode?!state.upstream:!hasChanges||!$('message').value.trim());
  let hint=!state?'正在读取仓库…':state.conflict||state.operation?'请先处理冲突或正在进行的 Git 操作':!state.branch?'请先创建分支':pushMode?'提交已完成，点击 Push 推送到 '+state.upstream:hasChanges?(state.files.some(staged)?'仅提交已暂存内容':'点击 Commit 将暂存全部更改并提交'):!state.upstream?'本地提交已保存；配置上游后才能推送':'工作区干净，没有待提交更改';
  if(hasChanges&&!$('message').value.trim())hint='请输入提交说明。'+hint;
  $('commit').title=hint;
  $('fetch').disabled=locked||!state?.remote;
  for(const a of ['pull','push'])$(a).disabled=locked||!state?.upstream||!state?.branch;
- $('push').textContent=state?.ahead>0?`↑ Push ↑${state.ahead}`:'↑ Push';
+ $('push').textContent=state?.ahead>0?`↑ Push (${state.ahead})`:'↑ Push';
  $('pull').textContent='↓ 拉取';$('fetch').textContent='获取';
  if(state)renderBranch(state);$('branch').disabled=locked;
  for(const id of ['branch','pull','push','fetch','commit']){$(id).classList.remove('loading');$(id).setAttribute('aria-busy','false');}

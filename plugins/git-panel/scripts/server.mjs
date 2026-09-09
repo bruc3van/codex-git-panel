@@ -107,7 +107,7 @@ export async function createPanel(directory) {
         if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}const body=JSON.parse(data);return send(200,body.action==='open'?await openFile(body.path):await act(body));}
         return send(404,{error:'Not found'});
       }
-      const asset={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/icon.svg':'icon.svg'}[url.pathname];
+      const asset={'/':'index.html','/app.js':'app.js','/tooltips.js':'tooltips.js','/style.css':'style.css','/icon.svg':'icon.svg'}[url.pathname];
       if(!asset||req.method!=='GET')return send(404,{error:'Not found'});
       res.writeHead(200,{'Content-Type':asset.endsWith('.svg')?'image/svg+xml':asset.endsWith('.js')?'text/javascript; charset=utf-8':asset.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});res.end(await readFile(path.join(web,asset)));
     }catch(e){send(400,{error:e.message});}

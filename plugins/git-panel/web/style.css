@@ -70,3 +70,13 @@ footer{min-height:22px;padding:3px 10px;font-size:10px;line-height:16px;max-heig
 #toggleHistory[aria-expanded=true]>.ui-icon{transform:rotate(90deg)}
 #toggleHistory:hover{background:var(--selected);border-color:var(--accent)}
 @media(max-width:480px){.branch-state{display:none}.compact-toolbar .branch-pill{max-width:35%}}
+/* Quiet, precise editing feedback and theme-aware help. */
+.compose{transition:border-color .18s,box-shadow .18s}
+.compose:has(textarea:focus){border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent),var(--shadow)}
+.compose textarea{caret-color:var(--accent);cursor:text;padding:7px 6px;border-radius:6px;transition:background .18s}
+.compose textarea:focus{outline:none;background:color-mix(in srgb,var(--accent) 3%,var(--surface))}
+.compose textarea::selection{background:color-mix(in srgb,var(--accent) 22%,var(--surface));color:var(--text)}
+.compose:has(textarea:focus) label{color:var(--accent)}
+.panel-tooltip{position:fixed;z-index:1000;max-width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);box-shadow:0 4px 16px #14223818,0 1px 3px #1422380d;font-size:12px;font-weight:400;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;animation:tip-appear .12s ease-out}
+@keyframes tip-appear{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.panel-tooltip{animation:none}}
