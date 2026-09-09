@@ -1,5 +1,7 @@
 # Codex Git Panel MVP
 
+项目目录：`C:\Users\Bruce\VSCodeProject\codex-git-panel`。界面默认浅色，采用细分隔、圆角提交区与蓝色强调；文件名与所在目录分层展示，支持深色及跟随系统。
+
 本地 Codex 插件，在内置浏览器中提供接近 VS Code 布局的手动 Git 面板。
 
 ## 使用
