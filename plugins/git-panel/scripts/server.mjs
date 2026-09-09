@@ -26,14 +26,19 @@ export async function createPanel(directory) {
     const branch=(await git(['symbolic-ref','--short','HEAD'],true)).trim();
     const upstream=(await git(['rev-parse','--abbrev-ref','@{upstream}'],true)).trim();
     const counts=upstream?(await git(['rev-list','--left-right','--count','HEAD...@{upstream}'])).trim().split(/\s+/).map(Number):[null,null];
-    const logs=head?await git(['log','-25','--format=%H%x00%h%x00%s%x00%d%x00%ar']):'';
+    const upstreamHead=upstream?(await git(['rev-parse','--verify','@{upstream}'])).trim():'';
+    const format='--format=%H%x00%h%x00%s%x00%d%x00%ar';
+    let logs=head?await git(['log','-25','--topo-order',format,head,...(upstreamHead?[upstreamHead]:[])]):'';
+    // Keep both position markers visible even when one is outside the recent page.
+    const listed=new Set(logs.split('\n').map(l=>l.split('\0')[0]));
+    for(const id of new Set([head,upstreamHead].filter(Boolean)))if(!listed.has(id))logs+=await git(['log','-1',format,id]);
     const history=logs.trim().split('\n').filter(Boolean).map(l=>{const [id,short,subject,refs,when]=l.split('\0');return {id,short,subject,refs,when};});
     let operation='';
     for(const name of ['MERGE_HEAD','rebase-merge','rebase-apply','CHERRY_PICK_HEAD','REVERT_HEAD']) {try{await stat(path.join(gitDir,name));operation=name;break;}catch{}}
     const conflict=files.some(f=>f.x==='U'||f.y==='U'||['AA','DD'].includes(f.x+f.y));
     const index=await git(['ls-files','--stage','-z']);
     const branches=(await git(['for-each-ref','--format=%(refname:strip=2)','refs/heads/'])).trim().split('\n').filter(Boolean);
-    return {branches,root,branch,upstream,head,files,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
+    return {upstreamHead,branches,root,branch,upstream,head,files,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
   }
   async function diff(p, staged, commit) {
     if(commit) { if(!/^[a-f0-9]{40}$/.test(commit))throw Error('无效提交'); return await git(['show','--format=fuller','--first-parent','--no-ext-diff','--no-textconv',commit]); }

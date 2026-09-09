@@ -40,8 +40,9 @@ test('Git workflow, stale index protection, remote operations and HTTP boundarie
   const remote=await mkdtemp(path.join(os.tmpdir(),'git-panel-remote-'));run(remote,'init','--bare');run(tmp,'remote','add','origin',remote);run(tmp,'push','-u','origin','main');
   await p.act({action:'fetch'});await p.act({action:'pull'});await p.act({action:'push'});
   const peer=await mkdtemp(path.join(os.tmpdir(),'git-panel-peer-'));run(peer,'clone','--branch','main',remote,'.');run(peer,'config','user.name','Peer');run(peer,'config','user.email','peer@example.invalid');await writeFile(path.join(peer,'remote.txt'),'remote\n');run(peer,'add','.');run(peer,'commit','-m','remote update');run(peer,'push');
-  await p.act({action:'fetch'});assert.equal((await p.state()).behind,1);await p.act({action:'pull'});assert.equal((await p.state()).behind,0);
-  await writeFile(path.join(tmp,'local.txt'),'local\n');await p.act({action:'stage',path:'local.txt'});await p.act({action:'commit',message:'local update',snapshot:(await p.state()).snapshot});await p.act({action:'push'});assert.equal((await p.state()).ahead,0);
+  await p.act({action:'fetch'});assert.equal((await p.state()).behind,1);
+  const behindState=await p.state();assert.notEqual(behindState.head,behindState.upstreamHead);assert.ok(behindState.history.some(c=>c.id===behindState.upstreamHead));assert.ok(behindState.history.some(c=>c.id===behindState.head));await p.act({action:'pull'});assert.equal((await p.state()).behind,0);
+  await writeFile(path.join(tmp,'local.txt'),'local\n');await p.act({action:'stage',path:'local.txt'});await p.act({action:'commit',message:'local update',snapshot:(await p.state()).snapshot});await p.act({action:'push'});assert.equal((await p.state()).ahead,0);assert.equal((await p.state()).head,(await p.state()).upstreamHead);
   run(peer,'pull','--ff-only');await writeFile(path.join(peer,'remote.txt'),'diverged\n');run(peer,'add','.');run(peer,'commit','-m','diverged');run(peer,'push');
   await writeFile(path.join(tmp,'local.txt'),'local divergence\n');run(tmp,'add','.');run(tmp,'commit','-m','local divergence');
   await p.act({action:'fetch'});await assert.rejects(p.act({action:'pull'}));
