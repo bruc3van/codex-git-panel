@@ -17,6 +17,4 @@ description: Open Git Panel (Git 面板) when the user requests a visual interfa
 
 3. Open the returned URL with `open_in_codex`: browser target, exact URL, `placement: "right"`. Discover the tool if needed. Preserve the URL's session fragment; never send it to an external service. If the tool is unavailable or fails, provide the local link. If queued, report queued rather than opened.
 
-For an explicit system-browser request, use `scripts/open.mjs` with the target path instead; use `--init` only when initialization is authorized. Its success confirms a browser-open request, not a verified visible tab.
-
 Opening the panel alone does not authorize staging, committing, discarding, switching branches, or remote operations. Leave those actions to the user in the panel unless separately requested.
