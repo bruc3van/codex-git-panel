@@ -24,6 +24,7 @@ details+details{margin-top:10px}summary{padding:6px 3px 9px;cursor:pointer;font-
 /* Keep the workspace dominant: one compact repository toolbar. */
 header.compact-toolbar{height:43px;min-height:43px;padding:7px 12px;gap:9px;flex-wrap:nowrap}
 .repo-title{min-width:0;flex:1}.repo-title strong{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.product-icon{display:block;flex-shrink:0;width:24px;height:24px;filter:drop-shadow(0 1px 2px #1764dc20)}
 .compact-toolbar .branch-pill{font-size:10px;padding:4px 7px;max-width:40%;flex-shrink:1;min-width:0}
 .compact-toolbar #themeButton{min-width:62px;padding:4px 7px;font-size:10px}
 footer{min-height:22px;padding:3px 10px;font-size:10px;line-height:16px;max-height:64px}

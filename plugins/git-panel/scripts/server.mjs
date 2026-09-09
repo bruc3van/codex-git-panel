@@ -92,9 +92,9 @@ export async function createPanel(directory) {
         if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}return send(200,await act(JSON.parse(data)));}
         return send(404,{error:'Not found'});
       }
-      const asset={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}[url.pathname];
+      const asset={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/icon.svg':'icon.svg'}[url.pathname];
       if(!asset||req.method!=='GET')return send(404,{error:'Not found'});
-      res.writeHead(200,{'Content-Type':asset.endsWith('.js')?'text/javascript; charset=utf-8':asset.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});res.end(await readFile(path.join(web,asset)));
+      res.writeHead(200,{'Content-Type':asset.endsWith('.svg')?'image/svg+xml':asset.endsWith('.js')?'text/javascript; charset=utf-8':asset.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});res.end(await readFile(path.join(web,asset)));
     }catch(e){send(400,{error:e.message});}
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${server.address().port}`;
