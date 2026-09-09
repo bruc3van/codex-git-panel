@@ -5,16 +5,17 @@ import {readFile, writeFile, realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash, randomBytes} from 'node:crypto';
+import {runtimePaths, acquireInstance} from './runtime.mjs';
 const exec = promisify(execFile);
 const hash = s => createHash('sha256').update(s).digest('hex');
 const web = fileURLToPath(new URL('../web/', import.meta.url));
-export async function createPanel(directory) {
+export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = {}) {
   const requested = await realpath(directory);
   async function git(args, allowFailure=false) {
     try { return (await exec('git',['--no-pager','-c','core.quotepath=false',...args],{cwd:requested,windowsHide:true,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never',GIT_LITERAL_PATHSPECS:'1',GIT_OPTIONAL_LOCKS:'0'}})).stdout; }
     catch(e) { if(allowFailure) return ''; throw new Error((e.stderr || e.message).trim()); }
   }
-  const root = (await git(['rev-parse','--show-toplevel'])).trim();
+  const root = await realpath((await git(['rev-parse','--show-toplevel'])).trim());
   if((await realpath(root)).toLowerCase()!==requested.toLowerCase()) throw new Error('请传入仓库根目录');
   const gitDir=(await git(['rev-parse','--absolute-git-dir'])).trim();
   let busy=false, fetched=null;
@@ -96,6 +97,7 @@ export async function createPanel(directory) {
     } finally {busy=false;}
   }
   const token=randomBytes(32).toString('hex');let origin;
+  let lastActivity=Date.now(), requests=0;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'");
@@ -107,6 +109,9 @@ export async function createPanel(directory) {
       if(url.pathname.startsWith('/api/')) {
         if(req.headers.authorization!==`Bearer ${token}`)return send(401,{error:'请从启动链接打开面板'});
         if(req.headers.origin && req.headers.origin!==origin)return send(403,{error:'Origin rejected'});
+        lastActivity=Date.now();requests++;
+        res.once('close',()=>{requests--;lastActivity=Date.now();});
+        if(req.method==='GET'&&url.pathname==='/api/heartbeat')return send(200,{root,protocol:1});
         if(req.method==='GET'&&url.pathname==='/api/state')return send(200,await state());
         if(req.method==='GET'&&url.pathname==='/api/diff')return send(200,{diff:await diff(url.searchParams.get('path'),url.searchParams.get('staged')==='true',url.searchParams.get('commit'))});
         if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}const body=JSON.parse(data);return send(200,body.action==='open'?await openFile(body.path):await act(body));}
@@ -118,10 +123,22 @@ export async function createPanel(directory) {
     }catch(e){send(400,{error:e.message});}
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${server.address().port}`;
+  const idleTimer=setInterval(()=>{
+    if(!busy&&!requests&&Date.now()-lastActivity>idleTimeoutMs){server.close();server.closeIdleConnections();}
+  },Math.min(30000,idleTimeoutMs));
+  idleTimer.unref();server.once('close',()=>clearInterval(idleTimer));
   return {server,url:origin+'/#'+token,origin,token,state,act,diff};
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
-  const panel=await createPanel(process.argv[2]);
-  if(process.argv[3])await writeFile(process.argv[3],JSON.stringify({url:panel.url,pid:process.pid}));
-  else console.log(panel.url);
+  const root=await realpath(process.argv[2]);
+  const paths=await runtimePaths(root);
+  let guard;
+  try {guard=await acquireInstance(paths.socket);}
+  catch(error){if(error.code==='EADDRINUSE')process.exit(0);throw error;}
+  try {
+    const panel=await createPanel(root);
+    panel.server.once('close',()=>guard.close());
+    await writeFile(paths.record,JSON.stringify({url:panel.url,pid:process.pid}));
+    if(!process.argv[3])console.log(panel.url);
+  }catch(error){guard.close();throw error;}
 }

@@ -53,7 +53,7 @@ function buttons(){
  if(target){$(target).textContent={switch:'切换中…',pull:'Pulling…',push:'Pushing…',fetch:'Fetching…',commit:'提交中…'}[activeAction];$(target).classList.add('loading');$(target).setAttribute('aria-busy','true');}
  document.querySelector('main').setAttribute('aria-busy',busy);
 }
-async function refresh(){const s=await api('state');if(!state){$('message').value=localStorage.getItem('draft:'+s.root)||'';}state=s;$('repoName').textContent=s.root.split(/[\\/]/).pop();$('root').textContent=s.root;$('root').title=s.root;$('repoName').title=s.root;$('kind').textContent=s.worktree?'worktree':'本地仓库';renderBranch(s);$('warning').hidden=!s.conflict&&!s.operation;$('warning').textContent='仓库有冲突或正在进行 '+s.operation+'，请先在终端处理。';$('counts').textContent=s.upstream?`待拉取 ${s.behind} · 待推送 ${s.ahead}`:'未配置上游 · 本地操作可用';$('lastFetch').textContent=s.fetched?'获取于 '+new Date(s.fetched).toLocaleTimeString():'';renderFiles();renderHistory();buttons();}
+async function refresh(background=false){const s=await api('state');if(background&&busy)return false;if(background&&JSON.stringify(s)===JSON.stringify(state))return false;if(!state){$('message').value=localStorage.getItem('draft:'+s.root)||'';}state=s;$('repoName').textContent=s.root.split(/[\\/]/).pop();$('root').textContent=s.root;$('root').title=s.root;$('repoName').title=s.root;$('kind').textContent=s.worktree?'worktree':'本地仓库';renderBranch(s);$('warning').hidden=!s.conflict&&!s.operation;$('warning').textContent='仓库有冲突或正在进行 '+s.operation+'，请先在终端处理。';$('counts').textContent=s.upstream?`待拉取 ${s.behind} · 待推送 ${s.ahead}`:'未配置上游 · 本地操作可用';$('lastFetch').textContent=s.fetched?'获取于 '+new Date(s.fetched).toLocaleTimeString():'';renderFiles();renderHistory();buttons();}
 function renderFiles(){
  const collapsed=new Set([...$('groups').querySelectorAll('details')].filter(d=>!d.open).map(d=>d.dataset.group));
  $('groups').replaceChildren();
@@ -170,3 +170,24 @@ themeWrap.addEventListener('keydown',e=>{
  if(e.key==='Escape'){closeTheme();themeButton.focus();}
  if(!themeMenu.hidden&&['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();const items=[...themeMenu.children];const i=items.indexOf(document.activeElement);items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length].focus();}
 });
+
+// Keep open tabs alive and refresh visible views without replacing the message draft.
+let syncing=false;
+async function syncPanel(){
+ if(syncing||busy)return;
+ syncing=true;
+ try{
+  if(document.hidden){await api('heartbeat');return;}
+  await refresh(true);
+  if(!busy&&selected){
+   const scroll=$('diff').scrollTop;
+   if(selected.commit||state.files.some(f=>f.path===selected.path))await showDiff(selected);
+   else closePreview();
+   $('diff').scrollTop=scroll;
+  }
+ }catch(error){status('连接中断，请通过 Skill 重新打开面板：'+error.message,true);}
+ finally{syncing=false;}
+}
+setInterval(syncPanel,5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncPanel();});
+window.addEventListener('focus',syncPanel);

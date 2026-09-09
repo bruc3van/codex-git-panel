@@ -105,13 +105,19 @@ This starts or reuses the service and prints a local URL without opening a brows
 
 Partial-hunk staging, side-by-side diffs, branch creation, conflict resolution UI, and AI commit-message generation are not currently included. Commit diffs compare against the first parent.
 
+## Multiple projects and service lifecycle
+
+Different repositories or worktrees use separate addresses. Panels for the same worktree share its files and index, so changes affect each other. A new service prevents overlapping Git operations within that service; external editors and terminals are not locked.
+
+Upgrading the plugin reuses a running service. Close its pages and let it expire, then reopen to load the new version. Services started before this lifecycle feature cannot expire or reuse instances across versions; stop those manually after confirming no operation is running. Avoid operating the same repository through both old and new services. On macOS/Linux, a crash may leave a temporary socket; remove it only after confirming its service has stopped.
+
 ## Local service and development
 
-The service listens only on `127.0.0.1`, binds each instance to one worktree, and protects its API with a random session credential and Host/Origin checks. Do not share launch URLs containing session credentials. Closing a browser does not stop the service; the launcher reuses a live instance for the same script path and repository. Runtime records are stored in `%LOCALAPPDATA%/CodexGitPanel`, or the system temporary directory when that variable is unset. Use the PID in the matching record to stop a service.
+The service listens only on `127.0.0.1`, binds each instance to one worktree, and protects its API with a random session credential and Host/Origin checks. Do not share launch URLs containing session credentials. The new launcher reuses one service per worktree across plugin installation paths, with a process-level singleton guard for concurrent starts. Visible panels refresh state and the current diff every 5 seconds; background pages send lightweight keepalive requests. After about 10 minutes without page requests, the service exits when no Git operation or request is running. Reopen through the Skill if the browser has frozen a tab for an extended period. Runtime records are stored in `%LOCALAPPDATA%/CodexGitPanel`, or the system temporary directory when that variable is unset. Use the PID in the matching record to stop a service.
 
 ```sh
 npm start
 npm test
 ```
 
-Runtime dependencies are Node.js and Git. Tests use temporary repositories for Git operations and HTTP boundaries; they do not commit or push your working repositories. Plugin source lives in `plugins/git-panel`, with tests in `tests`.
+Runtime dependencies are Node.js and Git. Tests use temporary repositories for Git operations, HTTP boundaries, concurrent startup, reuse across plugin paths, and idle shutdown; they do not commit or push your working repositories. Plugin source lives in `plugins/git-panel`, with tests in `tests`.
