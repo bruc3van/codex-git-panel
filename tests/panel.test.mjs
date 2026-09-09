@@ -1,0 +1,46 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createPanel} from '../plugins/git-panel/scripts/server.mjs';
+import http from 'node:http';
+test('Git workflow, stale index protection, remote operations and HTTP boundaries',async()=>{
+ const tmp=await mkdtemp(path.join(os.tmpdir(),'git-panel-test-'));
+ const run=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',windowsHide:true});
+ run(tmp,'init','-b','main');run(tmp,'config','user.name','Panel Test');run(tmp,'config','user.email','test@example.invalid');
+ const p=await createPanel(tmp);
+ try {
+  await writeFile(path.join(tmp,'中文 file.txt'),'one\n');
+  let s=await p.state();assert.equal(s.files[0].path,'中文 file.txt');assert.equal(s.head,'');
+  assert.match(await p.diff('中文 file.txt',false),/\+one/);
+  await p.act({action:'stage',path:'中文 file.txt'});
+  await p.act({action:'unstage',path:'中文 file.txt'});assert.equal((await p.state()).files[0].x,'?');
+  s=await p.state();
+  await assert.rejects(p.act({action:'commit',message:'initial',snapshot:s.snapshot,stageAll:true,paths:[]}),/文件列表/);
+  await p.act({action:'commit',message:'initial',snapshot:s.snapshot,stageAll:true,paths:s.files.map(f=>f.path)});
+  await writeFile(path.join(tmp,'中文 file.txt'),'two\n');
+  await p.act({action:'stage',path:'中文 file.txt'});s=await p.state();
+  await writeFile(path.join(tmp,'中文 file.txt'),'three\n');
+  assert.match(await p.diff('中文 file.txt',true),/\+two/);assert.match(await p.diff('中文 file.txt',false),/\+three/);
+  await p.act({action:'stage',path:'中文 file.txt'});
+  await assert.rejects(p.act({action:'commit',message:'stale',snapshot:s.snapshot}),/暂存内容已变化/);
+  await p.act({action:'unstage',path:'中文 file.txt'});
+  await p.act({action:'discard',path:'中文 file.txt',confirm:true});assert.equal((await p.state()).files.length,0);
+  await assert.rejects(p.act({action:'stage',path:'../escape'}),/文件状态/);
+  const remote=await mkdtemp(path.join(os.tmpdir(),'git-panel-remote-'));run(remote,'init','--bare');run(tmp,'remote','add','origin',remote);run(tmp,'push','-u','origin','main');
+  await p.act({action:'fetch'});await p.act({action:'pull'});await p.act({action:'push'});
+  const peer=await mkdtemp(path.join(os.tmpdir(),'git-panel-peer-'));run(peer,'clone','--branch','main',remote,'.');run(peer,'config','user.name','Peer');run(peer,'config','user.email','peer@example.invalid');await writeFile(path.join(peer,'remote.txt'),'remote\n');run(peer,'add','.');run(peer,'commit','-m','remote update');run(peer,'push');
+  await p.act({action:'fetch'});assert.equal((await p.state()).behind,1);await p.act({action:'pull'});assert.equal((await p.state()).behind,0);
+  await writeFile(path.join(tmp,'local.txt'),'local\n');await p.act({action:'stage',path:'local.txt'});await p.act({action:'commit',message:'local update',snapshot:(await p.state()).snapshot});await p.act({action:'push'});assert.equal((await p.state()).ahead,0);
+  run(peer,'pull','--ff-only');await writeFile(path.join(peer,'remote.txt'),'diverged\n');run(peer,'add','.');run(peer,'commit','-m','diverged');run(peer,'push');
+  await writeFile(path.join(tmp,'local.txt'),'local divergence\n');run(tmp,'add','.');run(tmp,'commit','-m','local divergence');
+  await p.act({action:'fetch'});await assert.rejects(p.act({action:'pull'}));
+  assert.equal((await fetch(p.origin+'/api/state')).status,401);
+  const headers={Authorization:'Bearer '+p.token};assert.equal((await fetch(p.origin+'/api/state',{headers})).status,200);
+  assert.equal((await fetch(p.origin+'/api/state',{headers:{...headers,Origin:'https://evil.invalid'}})).status,403);
+  const rejectedHost=await new Promise((resolve,reject)=>{http.get(p.origin+'/api/state',{headers:{...headers,Host:'evil.invalid'}},res=>{res.resume();resolve(res.statusCode);}).on('error',reject);});assert.equal(rejectedHost,403);
+  assert.equal((await fetch(p.origin+'/')).status,200);
+ }finally {await new Promise(r=>p.server.close(r));}
+});
