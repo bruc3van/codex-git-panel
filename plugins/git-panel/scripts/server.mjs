@@ -6,23 +6,41 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash, randomBytes} from 'node:crypto';
 import {runtimePaths, acquireInstance} from './runtime.mjs';
+import {createWorkQueue} from './work-queue.mjs';
 const exec = promisify(execFile);
 const hash = s => createHash('sha256').update(s).digest('hex');
+function isInsideRepo(root, resolved) {
+  const relative=path.relative(root,resolved);
+  return !!relative && relative!=='..' && !relative.startsWith('..'+path.sep) && !path.isAbsolute(relative);
+}
 const web = fileURLToPath(new URL('../web/', import.meta.url));
 export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = {}) {
   const requested = await realpath(directory);
-  async function git(args, allowFailure=false) {
-    try { return (await exec('git',['--no-pager','-c','core.quotepath=false',...args],{cwd:requested,windowsHide:true,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never',GIT_LITERAL_PATHSPECS:'1',GIT_OPTIONAL_LOCKS:'0'}})).stdout; }
-    catch(e) { if(allowFailure) return ''; throw new Error((e.stderr || e.message).trim()); }
+  const runGit=createWorkQueue();
+  async function git(args, allowFailure=false, signal) {
+    try { return await runGit(async()=> (await exec('git',['--no-pager','-c','core.quotepath=false',...args],{cwd:requested,signal,windowsHide:true,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never',GIT_LITERAL_PATHSPECS:'1',GIT_OPTIONAL_LOCKS:'0'}})).stdout,signal); }
+    catch(e) { if(signal?.aborted)throw signal.reason; if(allowFailure) return ''; if(e.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER')throw Error('Git 输出过大，请忽略生成目录或在终端查看'); throw new Error((e.stderr || e.message).trim()); }
   }
   const root = await realpath((await git(['rev-parse','--show-toplevel'])).trim());
   if((await realpath(root)).toLowerCase()!==requested.toLowerCase()) throw new Error('请传入仓库根目录');
   const gitDir=(await git(['rev-parse','--absolute-git-dir'])).trim();
   let busy=false, fetched=null;
-  async function state() {
-    const raw=await git(['status','--porcelain=v1','-z','--untracked-files=all']);
+  async function files(signal) {
+    const raw=await git(['status','--porcelain=v1','-z','--untracked-files=all'],false,signal);
     const chunks=raw.split('\0'), files=[];
     for(let i=0;i<chunks.length;i++) { const s=chunks[i]; if(!s)continue; const f={x:s[0],y:s[1],path:s.slice(3)}; if('RC'.includes(f.x)||'RC'.includes(f.y))f.oldPath=chunks[++i]; files.push(f); }
+    return files;
+  }
+  let pendingState;
+  function state() {
+    if(!pendingState) {
+      const current=readState().finally(()=>{if(pendingState===current)pendingState=null;});
+      pendingState=current;
+    }
+    return pendingState;
+  }
+  async function readState() {
+    const currentFiles=await files();
     const head=(await git(['rev-parse','--verify','HEAD'],true)).trim();
     const branch=(await git(['symbolic-ref','--short','HEAD'],true)).trim();
     const upstream=(await git(['rev-parse','--abbrev-ref','@{upstream}'],true)).trim();
@@ -36,29 +54,30 @@ export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = 
     const history=logs.trim().split('\n').filter(Boolean).map(l=>{const [id,short,subject,refs,when]=l.split('\0');return {id,short,subject,refs,when};});
     let operation='';
     for(const name of ['MERGE_HEAD','rebase-merge','rebase-apply','CHERRY_PICK_HEAD','REVERT_HEAD']) {try{await stat(path.join(gitDir,name));operation=name;break;}catch{}}
-    const conflict=files.some(f=>f.x==='U'||f.y==='U'||['AA','DD'].includes(f.x+f.y));
+    const conflict=currentFiles.some(f=>f.x==='U'||f.y==='U'||['AA','DD'].includes(f.x+f.y));
     const index=await git(['ls-files','--stage','-z']);
     const branches=(await git(['for-each-ref','--format=%(refname:strip=2)','refs/heads/'])).trim().split('\n').filter(Boolean);
-    return {upstreamHead,branches,root,branch,upstream,head,files,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
+    return {upstreamHead,branches,root,branch,upstream,head,files:currentFiles,history,ahead:counts[0],behind:counts[1],snapshot:hash(head+index),busy,operation,conflict,fetched,remote:!!(await git(['remote'])).trim(),worktree:gitDir.replaceAll('\\','/').includes('/worktrees/')};
   }
-  async function diff(p, staged, commit) {
-    if(commit) { if(!/^[a-f0-9]{40}$/.test(commit))throw Error('无效提交'); return await git(['show','--format=fuller','--first-parent','--no-ext-diff','--no-textconv',commit]); }
-    const s=await state(), f=s.files.find(f=>f.path===p);
+  async function diff(p, staged, commit, signal) {
+    signal?.throwIfAborted();
+    if(commit) { if(!/^[a-f0-9]{40}$/.test(commit))throw Error('无效提交'); return await git(['show','--format=fuller','--first-parent','--no-ext-diff','--no-textconv',commit],false,signal); }
+    const f=(await files(signal)).find(f=>f.path===p);
     if(!f)throw Error('文件状态已变化，请刷新');
     if(f.x==='?' && !staged) {
       const resolved=await realpath(path.join(root,p));
-      if(!resolved.startsWith((await realpath(root))+path.sep))throw Error('不能预览仓库外的链接目标');
+      if(!isInsideRepo(root,resolved))throw Error('不能预览仓库外的链接目标');
       if((await stat(resolved)).size>512000)return '文件过大，暂不预览';
-      const bytes=await readFile(resolved);if(bytes.includes(0))return '二进制文件';
+      const bytes=await readFile(resolved,{signal});if(bytes.includes(0))return '二进制文件';
       return '--- /dev/null\n+++ b/'+p+'\n@@ -0,0 +1,'+bytes.toString().split('\n').length+' @@\n'+bytes.toString().split('\n').map(l=>'+'+l).join('\n');
     }
-    return await git(['diff','--no-ext-diff','--no-textconv',...(staged?['--cached']:[]),'--',p,...(f.oldPath?[f.oldPath]:[])]);
+    return await git(['diff','--no-ext-diff','--no-textconv',...(staged?['--cached']:[]),'--',p,...(f.oldPath?[f.oldPath]:[])],false,signal);
   }
   async function openFile(p) {
     const s=await state();
     if(typeof p!=='string'||!s.files.some(f=>f.path===p))throw Error('文件状态已变化，请刷新');
-    const resolved=await realpath(path.join(root,p)), relative=path.relative(await realpath(root),resolved);
-    if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||!(await stat(resolved)).isFile())throw Error('只能打开仓库内的文件');
+    const resolved=await realpath(path.join(root,p));
+    if(!isInsideRepo(root,resolved)||!(await stat(resolved)).isFile())throw Error('只能打开仓库内的文件');
     if(/\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|lnk|url|hta|reg)$/i.test(resolved))throw Error('为防止执行脚本或程序，此文件类型不支持通过默认 App 打开');
     if(process.platform!=='win32')throw Error('当前默认 App 打开功能仅支持 Windows');
     await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','$info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = $env:GIT_PANEL_OPEN_PATH; $info.UseShellExecute = $true; [System.Diagnostics.Process]::Start($info) | Out-Null'],{windowsHide:true,timeout:15000,env:{...process.env,GIT_PANEL_OPEN_PATH:resolved}});
@@ -66,14 +85,15 @@ export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = 
   }
   async function act(body) {
     if(busy)throw Error('另一个操作正在执行');busy=true;
+    pendingState=null;
     try {
-      const s=await state();
+      const s=await readState();
       if(s.operation||s.conflict)throw Error('仓库正在合并、变基或有冲突，请先在终端处理');
       const a=body.action;
       if(['stage','unstage','discard'].includes(a)) {
         const f=s.files.find(f=>f.path===body.path);if(!f)throw Error('文件状态已变化');
         const paths=[f.path,...(f.oldPath?[f.oldPath]:[])];
-        if(a==='stage')await git(['add','--',...paths]);
+        if(a==='stage')await git(['add','--',...('RC'.includes(f.x)?[f.path]:paths)]);
         if(a==='unstage')await git(s.head?['restore','--staged','--',...paths]:['rm','--cached','--',...paths]);
         if(a==='discard') {if(f.x==='?'||body.confirm!==true)throw Error('仅支持确认后放弃已跟踪文件的未暂存修改');await git(['restore','--worktree','--',f.path]);}
       } else if(a==='commit') {
@@ -94,14 +114,14 @@ export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = 
       else if(a==='pull'||a==='push') {if(!s.branch||!s.upstream)throw Error('需要分支及上游配置'); if(a==='pull'&&s.files.length)throw Error('请先提交或自行保存工作区更改'); if(a==='pull')await git(['pull','--ff-only','--no-rebase']);else {const remote=(await git(['config','--get',`branch.${s.branch}.remote`])).trim();const ref=(await git(['config','--get',`branch.${s.branch}.merge`])).trim(); if(!remote||!ref.startsWith('refs/heads/'))throw Error('上游配置无效');await git(['push','--',remote,`HEAD:${ref}`]);}}
       else throw Error('未知操作');
       return {ok:true};
-    } finally {busy=false;}
+    } finally {busy=false;pendingState=null;}
   }
   const token=randomBytes(32).toString('hex');let origin;
   let lastActivity=Date.now(), requests=0;
   const server=http.createServer(async(req,res)=>{
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'");
-    const send=(code,data)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
+    const send=(code,data)=>{if(res.destroyed)return;res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
     try {
       if(req.headers.host!==new URL(origin).host)return send(403,{error:'Host rejected'});
       const url=new URL(req.url,origin);
@@ -113,8 +133,14 @@ export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = 
         res.once('close',()=>{requests--;lastActivity=Date.now();});
         if(req.method==='GET'&&url.pathname==='/api/heartbeat')return send(200,{root,protocol:1});
         if(req.method==='GET'&&url.pathname==='/api/state')return send(200,await state());
-        if(req.method==='GET'&&url.pathname==='/api/diff')return send(200,{diff:await diff(url.searchParams.get('path'),url.searchParams.get('staged')==='true',url.searchParams.get('commit'))});
-        if(req.method==='POST'&&url.pathname==='/api/action') {let data='';for await(const c of req){data+=c;if(data.length>16000)throw Error('请求过大');}const body=JSON.parse(data);return send(200,body.action==='open'?await openFile(body.path):await act(body));}
+        if(req.method==='GET'&&url.pathname==='/api/diff') {
+          const controller=new AbortController();
+          const cancel=()=>controller.abort();
+          res.once('close',cancel);
+          try {return send(200,{diff:await diff(url.searchParams.get('path'),url.searchParams.get('staged')==='true',url.searchParams.get('commit'),controller.signal)});}
+          finally {res.removeListener('close',cancel);}
+        }
+        if(req.method==='POST'&&url.pathname==='/api/action') {const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>64000)throw Error('请求过大');chunks.push(c);}const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));return send(200,body.action==='open'?await openFile(body.path):await act(body));}
         return send(404,{error:'Not found'});
       }
       const asset={'/':'index.html','/app.js':'app.js','/tooltips.js':'tooltips.js','/style.css':'style.css','/icon.svg':'icon.svg'}[url.pathname];
@@ -129,16 +155,31 @@ export async function createPanel(directory, {idleTimeoutMs = 10 * 60 * 1000} = 
   idleTimer.unref();server.once('close',()=>clearInterval(idleTimer));
   return {server,url:origin+'/#'+token,origin,token,state,act,diff};
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)) {
-  const root=await realpath(process.argv[2]);
+export async function startPanel(root, {publish = writeFile, create = createPanel} = {}) {
   const paths=await runtimePaths(root);
-  let guard;
-  try {guard=await acquireInstance(paths.socket);}
-  catch(error){if(error.code==='EADDRINUSE')process.exit(0);throw error;}
+  const guard=await acquireInstance(paths.socket);
+  let panel;
   try {
-    const panel=await createPanel(root);
+    panel=await create(root);
     panel.server.once('close',()=>guard.close());
-    await writeFile(paths.record,JSON.stringify({url:panel.url,pid:process.pid}));
+    await publish(paths.record,JSON.stringify({url:panel.url,pid:process.pid}),{mode:0o600});
+    return panel;
+  } catch(error) {
+    if(panel) {
+      const closed=new Promise(resolve=>panel.server.close(resolve));
+      panel.server.closeAllConnections();
+      await closed;
+    }
+    await new Promise(resolve=>guard.close(resolve));
+    throw error;
+  }
+}
+if(process.argv[1]===fileURLToPath(import.meta.url)) {
+  try {
+    const panel=await startPanel(await realpath(process.argv[2]));
     if(!process.argv[3])console.log(panel.url);
-  }catch(error){guard.close();throw error;}
+  } catch(error) {
+    console.error(error.code==='EADDRINUSE'?'Workspace service already running':error.message);
+    process.exitCode=1;
+  }
 }

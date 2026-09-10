@@ -18,7 +18,7 @@ test('concurrent launchers and different plugin paths reuse one workspace servic
  await mkdir(root);await mkdir(other);
  for(const directory of [root,other])await execute('git',['-C',directory,'init']);
  const copy=path.join(base,'plugin-copy');await cp(plugin,copy,{recursive:true});
- const env={...process.env,LOCALAPPDATA:base};
+ const env={...process.env,LOCALAPPDATA:base,XDG_RUNTIME_DIR:base};
  const launch=async(source,directory)=>(await execute(process.execPath,[path.join(source,'scripts/launch.mjs'),directory],{env,windowsHide:true,timeout:30000})).stdout.trim();
  try{
   const urls=await Promise.all([launch(plugin,root),launch(copy,root),launch(plugin,root),launch(copy,root)]);

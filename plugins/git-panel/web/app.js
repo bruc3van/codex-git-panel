@@ -2,21 +2,23 @@ import './tooltips.js';
 const $=id=>document.getElementById(id);
 const token=location.hash.slice(1)||sessionStorage.getItem('git-panel-token');
 if(location.hash){sessionStorage.setItem('git-panel-token',token);history.replaceState(null,'',location.pathname);}
-let state,selected,busy=false,activeAction='',diffRequest=0;
+let state,selected,busy=false,activeAction='',diffRequest=0,refreshRequest=0;
+let diffController,renderedDiffKey='',renderedDiffText,filesKey='';
 const staged=f=>f.x!==' '&&f.x!=='?';
 const changed=f=>f.y!==' '||f.x==='?';
-async function api(url,body){const r=await fetch('/api/'+url,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json();if(!r.ok)throw Error(data.error);return data;}
+async function api(url,body,signal){const r=await fetch('/api/'+url,{signal,method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json();if(!r.ok)throw Error(data.error);return data;}
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function icon(name){
- const paths={open:'M14 3h7v7m0-7L10 14M10 5H5v14h14v-5',close:'m6 6 12 12M18 6 6 18',chevron:'m8 5 6 7-6 7',branch:'M6 5v14M6 13c8 0 12-2 12-8',light:'M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5',dark:'M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5',auto:'M4 4h16v13H4zM8 21h8m-4-4v4'};
+ const paths={refresh:'M3 11a9 9 0 1 1 2.6 7.4M3 4v7h7',discard:'M9 4 3 10l6 6M3 10h11a7 7 0 0 1 7 7v3',open:'M14 3h7v7m0-7L10 14M10 5H5v14h14v-5',close:'m6 6 12 12M18 6 6 18',chevron:'m8 5 6 7-6 7',branch:'M6 5v14M6 13c8 0 12-2 12-8',light:'M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5',dark:'M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5',auto:'M4 4h16v13H4zM8 21h8m-4-4v4'};
  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','ui-icon');svg.setAttribute('aria-hidden','true');
  const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);
  for(const [cx,cy,r] of name==='branch'?[[6,4,2],[6,20,2],[18,4,2]]:name==='light'?[[12,12,4]]:[]){const circle=document.createElementNS(svg.namespaceURI,'circle');for(const [key,value] of Object.entries({cx,cy,r}))circle.setAttribute(key,value);svg.append(circle);}
  return svg;
 }
+$('refresh').replaceChildren(icon('refresh'));
 function renderBranch(s){const label=el('span',s.branch||'detached HEAD','branch-name');$('branch').replaceChildren(icon('branch'),label,el('span',s.upstream?'已关联上游':'无上游','branch-state'),icon('chevron'));$('branch').title=s.upstream||'尚未配置上游分支';}
-function closePreview(){selected=null;++diffRequest;document.body.classList.add('preview-closed');$('diff').replaceChildren();renderFiles();}
+function closePreview(){diffController?.abort();diffController=null;renderedDiffKey='';renderedDiffText=undefined;selected=null;++diffRequest;document.body.classList.add('preview-closed');$('diff').replaceChildren();renderFiles();}
 async function openInApp(path,button){
  if(button.disabled)return;button.disabled=true;button.classList.add('loading');button.setAttribute('aria-busy','true');status('正在打开文件…');
  try{await api('action',{action:'open',path});status('已请求默认 App 打开文件');}catch(e){status(e.message,true);}finally{button.disabled=busy;button.classList.remove('loading');button.setAttribute('aria-busy','false');}
@@ -34,15 +36,17 @@ $('branch').onclick=()=>{
 document.addEventListener('click',e=>{if(!e.target.closest('.branch-wrap'))closeBranches();});
 document.querySelector('.branch-wrap').addEventListener('focusout',e=>{if(!e.currentTarget.contains(e.relatedTarget))closeBranches();});
 $('branchMenu').onkeydown=e=>{if(e.key==='Escape'){closeBranches();$('branch').focus();}if(['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const items=[...$('branchMenu').querySelectorAll('button')],i=items.indexOf(document.activeElement);items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length]?.focus();}};
-function buttons(){
+function buttons(messageOnly=false){
  const locked=!state||busy||state?.busy||state?.conflict||!!state?.operation;
  const hasChanges=!!state?.files.length, pushMode=!hasChanges&&state?.ahead>0;
- document.querySelectorAll('button').forEach(b=>b.disabled=busy);
+ if(!messageOnly)document.querySelectorAll('button').forEach(b=>b.disabled=busy);
  $('commit').textContent=pushMode?`↑ Push (${state.ahead})`:'Commit';
  $('commit').disabled=locked||!state?.branch||(pushMode?!state.upstream:!hasChanges||!$('message').value.trim());
  let hint=!state?'正在读取仓库…':state.conflict||state.operation?'请先处理冲突或正在进行的 Git 操作':!state.branch?'请先创建分支':pushMode?'提交已完成，点击 Push 推送到 '+state.upstream:hasChanges?(state.files.some(staged)?'仅提交已暂存内容':'点击 Commit 将暂存全部更改并提交'):!state.upstream?'本地提交已保存；配置上游后才能推送':'工作区干净，没有待提交更改';
  if(hasChanges&&!$('message').value.trim())hint='请输入提交说明。'+hint;
+ if(state?.files.length>500)hint+='（提交全部更改会包含列表中未显示的文件）';
  $('commit').title=hint;
+ if(messageOnly)return;
  $('fetch').disabled=locked||!state?.remote;
  for(const a of ['pull','push'])$(a).disabled=locked||!state?.upstream||!state?.branch;
  $('push').textContent=state?.ahead>0?`↑ Push (${state.ahead})`:'↑ Push';
@@ -53,15 +57,17 @@ function buttons(){
  if(target){$(target).textContent={switch:'切换中…',pull:'Pulling…',push:'Pushing…',fetch:'Fetching…',commit:'提交中…'}[activeAction];$(target).classList.add('loading');$(target).setAttribute('aria-busy','true');}
  document.querySelector('main').setAttribute('aria-busy',busy);
 }
-async function refresh(background=false){const s=await api('state');if(background&&busy)return false;if(background&&JSON.stringify(s)===JSON.stringify(state))return false;if(!state){$('message').value=localStorage.getItem('draft:'+s.root)||'';}state=s;$('repoName').textContent=s.root.split(/[\\/]/).pop();$('root').textContent=s.root;$('root').title=s.root;$('repoName').title=s.root;$('kind').textContent=s.worktree?'worktree':'本地仓库';renderBranch(s);$('warning').hidden=!s.conflict&&!s.operation;$('warning').textContent='仓库有冲突或正在进行 '+s.operation+'，请先在终端处理。';$('counts').textContent=s.upstream?`待拉取 ${s.behind} · 待推送 ${s.ahead}`:'未配置上游 · 本地操作可用';$('lastFetch').textContent=s.fetched?'获取于 '+new Date(s.fetched).toLocaleTimeString():'';renderFiles();renderHistory();buttons();}
+async function refresh(background=false){const seq=++refreshRequest;const s=await api('state');if(seq!==refreshRequest||background&&busy)return false;if(JSON.stringify(s)===JSON.stringify(state))return false;if(!state){$('message').value=localStorage.getItem('draft:'+s.root)||'';}state=s;$('repoName').textContent=s.root.split(/[\\/]/).pop();$('root').textContent=s.root;$('root').title=s.root;$('repoName').title=s.root;$('kind').textContent=s.worktree?'worktree':'本地仓库';$('kind').title=s.root;renderBranch(s);$('warning').hidden=!s.conflict&&!s.operation;$('warning').textContent='仓库有冲突或正在进行 '+s.operation+'，请先在终端处理。';$('counts').textContent=s.upstream?`待拉取 ${s.behind} · 待推送 ${s.ahead}`:'未配置上游 · 本地操作可用';$('lastFetch').textContent=s.fetched?'获取于 '+new Date(s.fetched).toLocaleTimeString():'';renderFiles();renderHistory();buttons();}
 function renderFiles(){
+ const key=JSON.stringify([state.files,selected?.path,selected?.staged]);
+ if(key===filesKey)return;filesKey=key;
  const collapsed=new Set([...$('groups').querySelectorAll('details')].filter(d=>!d.open).map(d=>d.dataset.group));
  $('groups').replaceChildren();
  for(const [title,isStaged,filter] of [['已暂存的更改',true,staged],['更改',false,changed]]){
   const list=state.files.filter(filter);if(!list.length)continue;
   const d=el('details');d.dataset.group=title;d.open=!collapsed.has(title);
   const summary=el('summary',title);summary.append(el('span',list.length,'count'));d.append(summary);
-  for(const f of list){
+  for(const f of list.slice(0,500)){
    const row=el('div',undefined,'file');if(selected?.path===f.path&&selected?.staged===isStaged)row.classList.add('selected');
    const parts=f.path.split('/'),base=parts.pop();
    const fileIcon=el('span',/\.(m?js|json|css|html)$/.test(base)?'{}':'≡','file-icon');fileIcon.setAttribute('aria-hidden','true');
@@ -70,12 +76,13 @@ function renderFiles(){
    name.onclick=()=>showDiff({path:f.path,staged:isStaged});row.append(fileIcon,name);
    const open=el('button',undefined,'open-file');open.append(icon('open'));open.title='用默认 App 打开';open.setAttribute('aria-label','用默认 App 打开 '+f.path);open.onclick=()=>openInApp(f.path,open);row.append(open);
    if(!isStaged&&f.x!=='?'){
-    const discard=el('button','↶','action');discard.title='放弃未暂存更改';discard.setAttribute('aria-label','放弃 '+f.path+' 的未暂存更改');
+    const discard=el('button',undefined,'action');discard.append(icon('discard'));discard.title='放弃未暂存更改';discard.setAttribute('aria-label','放弃 '+f.path+' 的未暂存更改');
     discard.onclick=()=>{if(confirm(`放弃 ${f.path} 的未暂存修改？\n此操作不能通过 Git 撤销。`))action('discard',{path:f.path,confirm:true});};row.append(discard);
    }
    const b=el('button',isStaged?'−':'+','action');b.title=isStaged?'取消暂存':'暂存';b.setAttribute('aria-label',b.title+' '+f.path);
    b.onclick=()=>action(isStaged?'unstage':'stage',{path:f.path});row.append(b,el('span',isStaged?f.x:f.y===' '?'M':f.y,'code'));d.append(row);
   }
+  if(list.length>500)d.append(el('p',`仅显示前 500 / ${list.length} 个文件；自动暂存提交包含全部文件。请忽略生成目录或在终端处理。`,'muted'));
   $('groups').append(d);
  }
 }
@@ -98,14 +105,22 @@ function renderHistory(){
  }
  if(!state.history.length)$('history').append(el('p','尚无提交','muted'));
 }
-async function showDiff(selection){
- openPreview.hidden=!selection.path;document.body.classList.remove('preview-closed');selected=selection;const seq=++diffRequest;renderFiles();buttons();
- $('diffTitle').textContent=selection.title||selection.path.split('/').pop();$('diffTitle').title=selection.title||selection.path;
- $('diffType').textContent=selection.commit?'提交 · 第一父提交比较':selection.staged?'暂存区':'工作区';
+async function showDiff(selection,background=false){
+ const key=JSON.stringify(selection),same=JSON.stringify(selected)===key;
+ if(background&&(diffController||selection.commit&&renderedDiffKey===key))return;
+ diffController?.abort();const controller=new AbortController();diffController=controller;
+ if(!same){renderedDiffKey='';renderedDiffText=undefined;$('diff').replaceChildren(el('p','正在读取差异…','muted'));}
+ openPreview.hidden=!selection.path;document.body.classList.remove('preview-closed');selected=selection;const seq=++diffRequest;renderFiles();if(!background)buttons();
+ if(!background){$('diffTitle').textContent=selection.title||selection.path.split('/').pop();$('diffTitle').title=selection.title||selection.path;
+ $('diffType').textContent=selection.commit?'提交 · 第一父提交比较':selection.staged?'暂存区':'工作区';}
  try{
-  const data=await api('diff?'+new URLSearchParams(selection));if(seq!==diffRequest)return;
+  const data=await api('diff?'+new URLSearchParams(selection),undefined,controller.signal);if(seq!==diffRequest)return;
+  if(renderedDiffKey===key&&renderedDiffText===data.diff)return;
+  renderedDiffKey=key;renderedDiffText=data.diff;
   $('diff').replaceChildren();let old=0,next=0,inHunk=false;
-  for(const line of (data.diff||'没有差异').split('\n')){
+  const lines=(data.diff||'没有差异').split('\n');
+  if(lines.length>2000 || data.diff?.length>250000){$('diff').append(el('p','差异较大，使用纯文本预览。','muted'),el('pre',data.diff,'plain-diff'));return;}
+  for(const line of lines){
    const h=line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
    if(h){old=Number(h[1]);next=Number(h[2]);inHunk=true;}
    if(line.startsWith('diff '))inHunk=false;
@@ -114,16 +129,17 @@ async function showDiff(selection){
    const row=el('div',undefined,'line '+(meta?'meta':line.startsWith('+')?'add':line.startsWith('-')?'del':''));
    row.append(el('span',a,'number'),el('span',b,'number'),el('code',line));$('diff').append(row);
   }
- }catch(e){if(seq!==diffRequest)return;status(e.message,true);$('diff').replaceChildren(el('p',e.message,'empty'));}
+ }catch(e){if(seq!==diffRequest||controller.signal.aborted)return;renderedDiffKey='';renderedDiffText=undefined;status(e.message,true);$('diff').replaceChildren(el('p',e.message,'empty'));}
+ finally{if(diffController===controller)diffController=null;}
 }
-async function action(name,extra={}){if(busy)return;busy=true;activeAction=name;buttons();const labels={stage:'暂存',unstage:'取消暂存',discard:'放弃更改',commit:'提交',fetch:'获取',pull:'拉取',push:'推送',switch:'切换分支'};status(labels[name]+'中…');try{await api('action',{action:name,...extra});if(name==='switch')closePreview();if(name==='commit'){$('message').value='';localStorage.removeItem('draft:'+state.root);}await refresh();if(selected?.commit||state.files.some(f=>f.path===selected?.path))await showDiff(selected);else {closePreview();}status(''+labels[name]+'完成');}catch(e){status(e.message,true);try{await refresh();}catch{}}finally{busy=false;activeAction='';buttons();}}
-$('message').oninput=()=>{if(state)localStorage.setItem('draft:'+state.root,$('message').value);buttons();};
+async function action(name,extra={}){if(busy)return;++refreshRequest;diffController?.abort();busy=true;activeAction=name;buttons();const labels={stage:'暂存',unstage:'取消暂存',discard:'放弃更改',commit:'提交',fetch:'获取',pull:'拉取',push:'推送',switch:'切换分支'};status(labels[name]+'中…');try{await api('action',{action:name,...extra});if(name==='switch')closePreview();if(name==='commit'){$('message').value='';localStorage.removeItem('draft:'+state.root);}await refresh();if(selected?.commit||state.files.some(f=>f.path===selected?.path))await showDiff(selected);else {closePreview();}status(''+labels[name]+'完成');}catch(e){status(e.message,true);try{await refresh();}catch{}}finally{busy=false;activeAction='';buttons();}}
+$('message').oninput=()=>{if(state)localStorage.setItem('draft:'+state.root,$('message').value);buttons(true);};
 $('commit').onclick=()=>{
  if(!state||$('commit').disabled)return;
  if(!state.files.length&&state.ahead>0)return action('push');
  const stageAll=!state.files.some(staged);
  return action('commit',{message:$('message').value,snapshot:state.snapshot,stageAll,paths:state.files.map(f=>f.path)});
-};$('message').onkeydown=e=>{if(e.ctrlKey&&e.key==='Enter'&&!$('commit').disabled&&state?.files.length){e.preventDefault();$('commit').click();}};
+};$('message').onkeydown=e=>{if(e.ctrlKey&&e.key==='Enter'&&!$('commit').disabled){e.preventDefault();$('commit').click();}};
 for(const a of ['fetch','pull','push'])$(a).onclick=()=>action(a);
 $('refresh').onclick=async()=>{try{await refresh();if(selected)await showDiff(selected);status('已刷新');}catch(e){status(e.message,true);}};
 const mq=matchMedia('(prefers-color-scheme:light)');function theme(){document.body.classList.toggle('light',$('theme').value==='light'||$('theme').value==='auto'&&mq.matches);localStorage.setItem('git-theme',$('theme').value);}$('theme').value=localStorage.getItem('git-theme')||'light';$('theme').onchange=theme;mq.onchange=theme;theme();
@@ -181,7 +197,7 @@ async function syncPanel(){
   await refresh(true);
   if(!busy&&selected){
    const scroll=$('diff').scrollTop;
-   if(selected.commit||state.files.some(f=>f.path===selected.path))await showDiff(selected);
+   if(selected.commit||state.files.some(f=>f.path===selected.path))await showDiff(selected,true);
    else closePreview();
    $('diff').scrollTop=scroll;
   }

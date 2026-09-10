@@ -30,7 +30,7 @@ Git Panel is a local Codex plugin with an interactive Git interface. Use a promp
 
 ## Install with Codex
 
-Requirements: **Node.js 20+, Git, and a Codex client with plugin support**. Runtime behavior has been verified on Windows; macOS/Linux have not been runtime-verified. The panel currently uses mostly Chinese UI text with some English Git action labels.
+Requirements: **Node.js 20+, Git, and a Codex client with plugin support**. Runtime behavior has been verified on Windows; Linux server tests have also passed in WSL Ubuntu; macOS has not been runtime-verified. The panel currently uses mostly Chinese UI text with some English Git action labels.
 
 Copy this entire prompt into Codex:
 
@@ -109,11 +109,11 @@ Partial-hunk staging, side-by-side diffs, branch creation, conflict resolution U
 
 Different repositories or worktrees use separate addresses. Panels for the same worktree share its files and index, so changes affect each other. A new service prevents overlapping Git operations within that service; external editors and terminals are not locked.
 
-Upgrading the plugin reuses a running service. Close its pages and let it expire, then reopen to load the new version. Services started before this lifecycle feature cannot expire or reuse instances across versions; stop those manually after confirming no operation is running. Avoid operating the same repository through both old and new services. On macOS/Linux, a crash may leave a temporary socket; remove it only after confirming its service has stopped.
+Upgrading the plugin reuses a running service. Close its pages and let it expire, then reopen to load the new version. Services started before this lifecycle feature cannot expire or reuse instances across versions; stop those manually after confirming no operation is running. Avoid operating the same repository through both old and new services. On macOS/Linux, the launcher recovers a current-user socket only after confirming it has no listener. If recovery itself is killed, the error identifies a `.recovery` lock; remove it only after all related launch processes have exited. Stop older Unix services before upgrading because the runtime directory has changed.
 
 ## Local service and development
 
-The service listens only on `127.0.0.1`, binds each instance to one worktree, and protects its API with a random session credential and Host/Origin checks. Do not share launch URLs containing session credentials. The new launcher reuses one service per worktree across plugin installation paths, with a process-level singleton guard for concurrent starts. Visible panels refresh state and the current diff every 5 seconds; background pages send lightweight keepalive requests. After about 10 minutes without page requests, the service exits when no Git operation or request is running. Reopen through the Skill if the browser has frozen a tab for an extended period. Runtime records are stored in `%LOCALAPPDATA%/CodexGitPanel`, or the system temporary directory when that variable is unset. Use the PID in the matching record to stop a service.
+The service listens only on `127.0.0.1`, binds each instance to one worktree, and protects its API with a random session credential and Host/Origin checks. Do not share launch URLs containing session credentials. The new launcher reuses one service per worktree across plugin installation paths, with a process-level singleton guard for concurrent starts. Visible panels refresh state and the current diff every 5 seconds; background pages send lightweight keepalive requests. After about 10 minutes without page requests, the service exits when no Git operation or request is running. Reopen through the Skill if the browser has frozen a tab for an extended period. Runtime records are stored in `%LOCALAPPDATA%/CodexGitPanel`, or the user home directory when that variable is unset. Unix uses `$XDG_RUNTIME_DIR/CodexGitPanel`, falling back to `~/.local/share/CodexGitPanel`, with directory mode 0700 and new record mode 0600. Use the PID in the matching record to stop a service.
 
 ```sh
 npm start
@@ -121,3 +121,11 @@ npm test
 ```
 
 Runtime dependencies are Node.js and Git. Tests use temporary repositories for Git operations, HTTP boundaries, concurrent startup, reuse across plugin paths, and idle shutdown; they do not commit or push your working repositories. Plugin source lives in `plugins/git-panel`, with tests in `tests`.
+
+At widths up to 600px, the preview fills the content area; close it to return to the list. Each file group renders up to 500 entries with a notice; automatic stage-all commits still include the full list. Diffs over 2000 lines or 250KB use plain text. Git output over 4MB produces an actionable error. `Ctrl + Enter` in the message field invokes the current primary action, including Push.
+
+Unix sockets use a private `/tmp/codex-gp-<uid>` directory to stay below platform socket path limits.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
