@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test",
     "start": "node plugins/git-panel/scripts/launch.mjs ."
   },
   "engines": {
