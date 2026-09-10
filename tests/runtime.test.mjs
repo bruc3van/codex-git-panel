@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, cp, readFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, cp, readFile, realpath} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
@@ -26,7 +26,7 @@ test('concurrent launchers and different plugin paths reuse one workspace servic
   const otherUrl=await launch(plugin,other);assert.notEqual(new URL(otherUrl).origin,new URL(urls[0]).origin);
   const url=new URL(urls[0]);
   const state=await fetch(url.origin+'/api/state',{headers:{Authorization:'Bearer '+url.hash.slice(1)}}).then(r=>r.json());
-  assert.equal(path.resolve(state.root),root);
+  assert.equal(await realpath(state.root),await realpath(root));
   assert.equal(await launch(copy,root),urls[0]);
  }finally{
   const {readdir}=await import('node:fs/promises');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {mkdtemp, writeFile, readFile, stat} from 'node:fs/promises';
+import {mkdtemp, writeFile, readFile, stat, realpath} from 'node:fs/promises';
 import {execFileSync, spawn} from 'node:child_process';
 import {once} from 'node:events';
 import path from 'node:path';
@@ -10,7 +10,7 @@ import {createPanel, startPanel} from '../plugins/git-panel/scripts/server.mjs';
 import {existingPanel, acquireInstance, runtimePaths} from '../plugins/git-panel/scripts/runtime.mjs';
 
 const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','pipe']});
-async function repo(){const root=await mkdtemp(path.join(os.tmpdir(),'panel-regression-'));git(root,'init','-b','main');git(root,'config','user.name','Test');git(root,'config','user.email','test@example.invalid');return root;}
+async function repo(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'panel-regression-')));git(root,'init','-b','main');git(root,'config','user.name','Test');git(root,'config','user.email','test@example.invalid');return root;}
 const close=server=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections?.();});
 
 test('dead PID records never send a token; heartbeat redirects are rejected',async()=>{
